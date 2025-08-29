@@ -399,73 +399,232 @@ class DashboardPage(ctk.CTkFrame):
 
 class StudentsPage(ctk.CTkFrame):
     """Students management page"""
-    
+
     def __init__(self, parent, db_manager: DatabaseManager):
         super().__init__(parent)
         self.db_manager = db_manager
-        
+
         self.setup_ui()
         self.load_students()
-    
+
     def setup_ui(self):
         """Setup students page UI"""
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
-        
+
         # Title and controls
         header_frame = ctk.CTkFrame(self)
         header_frame.grid(row=0, column=0, padx=20, pady=20, sticky="ew")
         header_frame.grid_columnconfigure(1, weight=1)
-        
-        title_label = ctk.CTkLabel(header_frame, text="Students Management", 
+
+        title_label = ctk.CTkLabel(header_frame, text="Students Management",
                                   font=ctk.CTkFont(size=24, weight="bold"))
         title_label.grid(row=0, column=0, padx=20, pady=20, sticky="w")
-        
-        refresh_btn = ctk.CTkButton(header_frame, text="Refresh", command=self.load_students)
-        refresh_btn.grid(row=0, column=2, padx=20, pady=20, sticky="e")
-        
+
+        btn_frame = ctk.CTkFrame(header_frame)
+        btn_frame.grid(row=0, column=2, sticky="e", padx=10)
+        add_btn = ctk.CTkButton(btn_frame, text="Add", command=self.add_student)
+        edit_btn = ctk.CTkButton(btn_frame, text="Edit", command=self.edit_student)
+        del_btn = ctk.CTkButton(btn_frame, text="Delete", command=self.delete_student)
+        refresh_btn = ctk.CTkButton(btn_frame, text="Refresh", command=self.load_students)
+        add_btn.grid(row=0, column=0, padx=5)
+        edit_btn.grid(row=0, column=1, padx=5)
+        del_btn.grid(row=0, column=2, padx=5)
+        refresh_btn.grid(row=0, column=3, padx=5)
+
         # Students table
         table_frame = ctk.CTkFrame(self)
         table_frame.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
         table_frame.grid_columnconfigure(0, weight=1)
         table_frame.grid_rowconfigure(0, weight=1)
-        
+
         columns = ("ID", "Student ID", "Full Name", "Email", "Program", "Year", "Has Voted", "Status")
         self.students_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
-        
+
         for col in columns:
             self.students_tree.heading(col, text=col)
             self.students_tree.column(col, width=120)
-        
+
         # Scrollbar
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.students_tree.yview)
         self.students_tree.configure(yscrollcommand=scrollbar.set)
-        
+
         self.students_tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
-    
+
     def load_students(self):
-        """Load students data"""
-        # Clear existing data
-        for item in self.students_tree.get_children():
-            self.students_tree.delete(item)
-        
-        query = """
-        SELECT id, student_id, full_name, email, program, year_of_study, 
-               has_voted, is_active 
-        FROM students 
-        ORDER BY student_id
-        """
-        
-        result = self.db_manager.execute_query(query)
-        if result:
-            for row in result:
-                # Convert boolean values to readable text
-                has_voted = "Yes" if row[6] else "No"
-                is_active = "Active" if row[7] else "Inactive"
+        """Load students data in a separate thread to avoid UI freeze."""
+        def fetch_and_update():
+            query = """
+            SELECT id, student_id, full_name, email, program, year_of_study,
+                   has_voted, is_active
+            FROM students
+            ORDER BY student_id
+            """
+            result = self.db_manager.execute_query(query)
+            
+            def update_ui():
+                # Clear existing data
+                for item in self.students_tree.get_children():
+                    self.students_tree.delete(item)
                 
-                display_row = (*row[:6], has_voted, is_active)
-                self.students_tree.insert("", "end", values=display_row)
+                if result:
+                    for row in result:
+                        has_voted = "Yes" if row[6] else "No"
+                        is_active = "Active" if row[7] else "Inactive"
+                        display_row = (*row[:6], has_voted, is_active)
+                        self.students_tree.insert("", "end", values=display_row)
+            
+            # Schedule the UI update on the main thread
+            self.after(0, update_ui)
+
+        # Run the database query in a background thread
+        threading.Thread(target=fetch_and_update, daemon=True).start()
+
+    def _open_student_modal(self, title="New Student", data=None):
+        """Opens a modal for adding or editing a student."""
+        modal = ctk.CTkToplevel(self)
+        modal.title(title)
+        modal.geometry("480x400")
+        modal.resizable(False, False)
+        modal.transient(self)
+        modal.grab_set()
+
+        ctk.CTkLabel(modal, text=title, font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10, 5))
+        frame = ctk.CTkFrame(modal)
+        frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        entries = {}
+        labels = ["Student ID", "Full Name", "Email", "Password", "Program", "Year"]
+        for i, label_text in enumerate(labels):
+            ctk.CTkLabel(frame, text=label_text).grid(row=i, column=0, sticky="w", padx=10, pady=5)
+            if label_text == "Password":
+                placeholder = "Leave blank to keep existing" if data else "Required for new student"
+                entries[label_text] = ctk.CTkEntry(frame, width=300, show="*", placeholder_text=placeholder)
+            else:
+                entries[label_text] = ctk.CTkEntry(frame, width=300)
+            entries[label_text].grid(row=i, column=1, padx=10, pady=5)
+
+        entries["active_var"] = ctk.BooleanVar(value=True)
+        entries["active_check"] = ctk.CTkCheckBox(frame, text="Active", variable=entries["active_var"])
+        entries["active_check"].grid(row=len(labels), column=1, padx=10, pady=10, sticky="w")
+
+        if data:
+            entries["Student ID"].insert(0, data.get("student_id", ""))
+            entries["Full Name"].insert(0, data.get("full_name", ""))
+            entries["Email"].insert(0, data.get("email", ""))
+            entries["Program"].insert(0, data.get("program", ""))
+            entries["Year"].insert(0, str(data.get("year_of_study", "")))
+            entries["active_var"].set(bool(data.get("is_active", 1)))
+
+        def on_save():
+            student_id = entries["Student ID"].get().strip()
+            full_name = entries["Full Name"].get().strip()
+            email = entries["Email"].get().strip()
+            password = entries["Password"].get().strip()
+            program = entries["Program"].get().strip()
+            year = entries["Year"].get().strip()
+            is_active = 1 if entries["active_var"].get() else 0
+
+            if not (student_id and full_name and email):
+                messagebox.showerror("Error", "Student ID, Full Name, and Email are required.", parent=modal)
+                return
+
+            # This function will run in a background thread
+            def save_to_db():
+                ok = False
+                if data:  # Update existing student
+                    if password:
+                        # Store plain text password
+                        query = """UPDATE students SET student_id=%s, full_name=%s, email=%s, password_hash=%s, program=%s, year_of_study=%s, is_active=%s WHERE id=%s"""
+                        params = (student_id, full_name, email, password, program, year or 0, is_active, data["id"])
+                    else:
+                        query = """UPDATE students SET student_id=%s, full_name=%s, email=%s, program=%s, year_of_study=%s, is_active=%s WHERE id=%s"""
+                        params = (student_id, full_name, email, program, year or 0, is_active, data["id"])
+                    ok = self.db_manager.execute_update(query, params)
+                else:  # Insert new student
+                    if not password:
+                        # Show error on main thread
+                        self.after(0, lambda: messagebox.showerror("Error", "Password is required for new students.", parent=modal))
+                        return
+                    # Store plain text password
+                    query = """INSERT INTO students (student_id, full_name, email, password_hash, program, year_of_study, is_active) VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+                    params = (student_id, full_name, email, password, program, year or 0, is_active)
+                    ok = self.db_manager.execute_update(query, params)
+
+                # After DB operation, update UI on the main thread
+                if ok:
+                    self.after(0, modal.destroy)
+                    self.load_students() # This will also run in a thread
+
+            # Run the save operation in a thread
+            threading.Thread(target=save_to_db, daemon=True).start()
+
+        btn_frame = ctk.CTkFrame(modal)
+        btn_frame.pack(pady=10)
+        save_btn = ctk.CTkButton(btn_frame, text="Save", command=on_save)
+        cancel_btn = ctk.CTkButton(btn_frame, text="Cancel", command=modal.destroy)
+        save_btn.grid(row=0, column=0, padx=10)
+        cancel_btn.grid(row=0, column=1, padx=10)
+
+    def add_student(self):
+        """Opens the modal to add a new student."""
+        self._open_student_modal("Add Student")
+
+    def edit_student(self):
+        """Opens the modal to edit the selected student."""
+        selected_item = self.students_tree.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "Please select a student to edit.")
+            return
+
+        item_values = self.students_tree.item(selected_item[0], "values")
+        student_db_id = item_values[0]
+
+        # Fetch full data to ensure we have everything
+        query = "SELECT id, student_id, full_name, email, program, year_of_study, is_active FROM students WHERE id = %s"
+        result = self.db_manager.execute_query(query, (student_db_id,))
+
+        if not result:
+            messagebox.showerror("Error", "Could not find the selected student in the database.")
+            return
+
+        student_data = {
+            "id": result[0][0],
+            "student_id": result[0][1],
+            "full_name": result[0][2],
+            "email": result[0][3],
+            "program": result[0][4],
+            "year_of_study": result[0][5],
+            "is_active": result[0][6]
+        }
+        self._open_student_modal("Edit Student", data=student_data)
+
+    def delete_student(self):
+        """Deletes the selected student."""
+        selected_item = self.students_tree.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "Please select a student to delete.")
+            return
+
+        if not messagebox.askyesno("Confirm Delete", "Are you sure you want to delete the selected student? This may affect vote records."):
+            return
+            
+        item_values = self.students_tree.item(selected_item[0], "values")
+        student_db_id = item_values[0]
+
+        def delete_from_db():
+            query = "DELETE FROM students WHERE id = %s"
+            if self.db_manager.execute_update(query, (student_db_id,)):
+                # Show success and reload on the main thread
+                self.after(0, lambda: messagebox.showinfo("Success", "Student deleted successfully."))
+                self.load_students()
+            else:
+                # Error is already shown by db_manager
+                pass
+        
+        # Run delete in a thread
+        threading.Thread(target=delete_from_db, daemon=True).start()
 
 
 class CandidatesPage(ctk.CTkFrame):

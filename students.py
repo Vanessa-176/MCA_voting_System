@@ -4,7 +4,6 @@ from mysql.connector import Error
 import os
 import tkinter.messagebox as messagebox
 from tkinter import ttk
-import hashlib
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -125,26 +124,15 @@ class StudentLoginPage(ctk.CTkFrame):
             return
 
         try:
+            # Assuming 'password_hash' column now stores plain text
             query = "SELECT id, password_hash, has_voted FROM students WHERE student_id = %s AND is_active = 1"
             result = self.db_manager.execute_query(query, (student_id,))
 
             if result:
-                db_id, stored_hash, has_voted = result[0]
+                db_id, stored_password, has_voted = result[0]
                 
-                # For demo purposes, we assume a simple password check if no hash is stored
-                # In a real system, all passwords should be hashed.
-                password_valid = False
-                if stored_hash:
-                    # Compare hashed password
-                    password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-                    if password_hash == stored_hash:
-                        password_valid = True
-                else:
-                    # Fallback for plain text password (not recommended)
-                    if password == stored_hash:
-                         password_valid = True
-
-                if password_valid:
+                # Plain text password check
+                if password == stored_password:
                     if has_voted:
                         messagebox.showinfo("Already Voted", "You have already cast your vote. You cannot vote again.")
                     else:
@@ -243,12 +231,14 @@ class VotingPage(ctk.CTkFrame):
             ip_address = "127.0.0.1" # Placeholder IP
 
             for pos_id, cand_id in self.votes_to_cast.items():
-                params = (self.db_student_id, pos_id, cand_id, timestamp, ip_address)
+                # FIX: Use self.student_id_str instead of self.db_student_id
+                params = (self.student_id_str, pos_id, cand_id, timestamp, ip_address)
                 if not self.db_manager.execute_update(vote_query, params):
                     # Error message is shown by db_manager, so we just stop
                     return
 
             # Mark the student as having voted
+            # Note: We use the primary key (db_student_id) for the UPDATE, which is correct and efficient.
             update_student_query = "UPDATE students SET has_voted = 1 WHERE id = %s"
             if not self.db_manager.execute_update(update_student_query, (self.db_student_id,)):
                 return
